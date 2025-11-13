@@ -1,0 +1,105 @@
+// ------------------------------------------------------------
+// Simple Parameterized FIFO (Single Clock) - Fixed
+// Beginner-Friendly RTL
+// ------------------------------------------------------------
+module fifo #(
+    parameter int DATA_WIDTH = 8,
+    parameter int ADDR_WIDTH = 4
+)(
+    input  logic                     clk,
+    input  logic                     rst_n,
+
+    // Write Interface
+    input  logic                     wr_en,
+    input  logic [DATA_WIDTH-1:0]    wr_data,
+    output logic                     wr_full,
+
+    // Read Interface
+    input  logic                     rd_en,
+    output logic [DATA_WIDTH-1:0]    rd_data,
+    output logic                     rd_empty,
+
+    // occupancy: holds values 0..DEPTH (ADDR_WIDTH+1 bits)
+    output logic [ADDR_WIDTH:0]      occupancy
+);
+
+    // depth (number of entries)
+    localparam int DEPTH = 1 << ADDR_WIDTH;
+
+    // memory array
+    logic [DATA_WIDTH-1:0] mem [0:DEPTH-1];
+
+    // read/write pointers
+    logic [ADDR_WIDTH-1:0] rd_ptr, wr_ptr;
+
+    // ------------------------------------------------------------
+    // Write Logic (wraps to 0 at DEPTH-1)
+    // ------------------------------------------------------------
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            wr_ptr <= '0;
+        end else begin
+            if (wr_en && !wr_full) begin
+                mem[wr_ptr] <= wr_data;
+                // wrap pointer
+                if (wr_ptr == DEPTH-1) wr_ptr <= '0;
+                else                    wr_ptr <= wr_ptr + 1;
+            end
+        end
+    end
+
+    // ------------------------------------------------------------
+    // Read Logic (wraps to 0 at DEPTH-1)
+    // rd_data updated when a valid read occurs
+    // ------------------------------------------------------------
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            rd_ptr <= '0;
+            rd_data <= '0;
+        end else begin
+            if (rd_en && !rd_empty) begin
+                rd_data <= mem[rd_ptr];
+                // wrap pointer
+                if (rd_ptr == DEPTH-1) rd_ptr <= '0;
+                else                    rd_ptr <= rd_ptr + 1;
+            end
+        end
+    end
+
+    // ------------------------------------------------------------
+    // Occupancy counter
+    // - increments on successful write only
+    // - decrements on successful read only
+    // - stays same if both read and write succeed in the same cycle
+    // ------------------------------------------------------------
+    always_ff @(posedge clk) begin
+        if (!rst_n) begin
+            occupancy <= '0;
+        end else begin
+            // signals that indicate a successful write/read this cycle
+            logic do_wr = (wr_en && !wr_full);
+            logic do_rd = (rd_en && !rd_empty);
+
+            case ({do_wr, do_rd})
+                2'b10: occupancy <= occupancy + 1; // only write
+                2'b01: occupancy <= occupancy - 1; // only read
+                2'b11: occupancy <= occupancy;     // both => no change
+                default: occupancy <= occupancy;   // neither => no change
+            endcase
+        end
+    end
+
+    // status flags
+    assign wr_full  = (occupancy == DEPTH);
+    assign rd_empty = (occupancy == 0);
+
+    // simple simulation assertion to catch bugs early (optional)
+`ifdef SIM
+    always_ff @(posedge clk) begin
+        if (rst_n) begin
+            assert(occupancy <= DEPTH) else $error("FIFO occupancy exceeded DEPTH");
+        end
+    end
+`endif
+
+endmodule
